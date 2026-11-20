@@ -49,6 +49,38 @@ app.use((_req, res, next) => {
   });
   next();
 });
+/** Deployment diagnostics — reports configuration problems without exposing secrets. */
+app.get('/api/health', async (_req, res) => {
+  const env = process.env;
+  const dbUrl = env.DATABASE_URL ?? env.POSTGRES_URL ?? '';
+  let host = '';
+  let port = '';
+  try {
+    if (dbUrl) ({ hostname: host, port } = new URL(dbUrl));
+  } catch {
+    host = 'INVALID URL — URL-encode special characters in the password';
+  }
+  const config = {
+    platform: env.VERCEL ? 'vercel' : 'node',
+    database_url: dbUrl ? `set (host ${host}${port ? `:${port}` : ''})` : 'MISSING',
+    supabase_storage: env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY ? 'configured' : 'MISSING (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)',
+    bootstrap_admin: env.BOOTSTRAP_ADMIN_EMAIL && env.BOOTSTRAP_ADMIN_PASSWORD ? 'set' : 'not set',
+    app_url: env.APP_URL ?? '(default)',
+  };
+  const hints: string[] = [];
+  if (/^db\.[a-z0-9]+\.supabase\.co$/.test(host))
+    hints.push('You are using the direct connection (IPv6 only, unreachable from Vercel). Use the "Transaction pooler" URL (…pooler.supabase.com:6543).');
+  try {
+    await initialize();
+    const users = await scalar<number>('SELECT COUNT(*) FROM users');
+    if (users === 0) hints.push('Database is empty: set BOOTSTRAP_ADMIN_EMAIL and BOOTSTRAP_ADMIN_PASSWORD (or SEED_DEMO=1), then redeploy.');
+    res.json({ ok: true, database: 'connected', users, ...config, hints });
+  } catch (e) {
+    const err = e as any;
+    res.status(500).json({ ok: false, database: `ERROR: ${err?.code ? `${err.code} ` : ''}${String(err?.message ?? e).slice(0, 300)}`, ...config, hints });
+  }
+});
+
 app.use('/api', async (_req, _res, next) => {
   await initialize();
   next();
@@ -60,7 +92,6 @@ app.use('/api', csrfGuard, loadUser, (_req, res, next) => {
   next();
 });
 
-app.get('/api/health', (_req, res) => res.json({ ok: true }));
 app.get('/api/stream', requireAuth, streamHandler);
 app.use('/api/auth', authRouter);
 app.use('/api/admin', adminRouter);

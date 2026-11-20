@@ -37,6 +37,7 @@ async function postgresDriver(): Promise<Driver> {
     max: Number(process.env.PG_POOL_MAX ?? (process.env.VERCEL ? 3 : 10)),
     ssl: local ? undefined : { rejectUnauthorized: false },
     idleTimeoutMillis: 10_000,
+    connectionTimeoutMillis: 10_000,
   });
   return {
     kind: 'postgres',
@@ -77,6 +78,8 @@ let driverP: Promise<Driver> | null = null;
 /** Connects once per process and makes sure the schema exists (idempotent, serialized by an advisory lock). */
 export function ready(): Promise<Driver> {
   driverP ??= (async () => {
+    if (!DATABASE_URL && process.env.VERCEL)
+      throw new Error('DATABASE_URL is not set. Add your Supabase "Transaction pooler" connection string in Vercel → Settings → Environment Variables, then redeploy.');
     const d = DATABASE_URL ? await postgresDriver() : await pgliteDriver();
     await d.exec(`BEGIN; SELECT pg_advisory_xact_lock(727274); ${SCHEMA} COMMIT;`);
     return d;
