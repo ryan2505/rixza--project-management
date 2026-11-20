@@ -100,13 +100,26 @@ export function useAction<TVars = void, TRes = unknown>(fn: (v: TVars) => Promis
   });
 }
 
-/** Live updates via Server-Sent Events: refetch whatever is on screen when the project changes. */
+/** Live updates via Server-Sent Events: refetch whatever is on screen when the project changes.
+ *  On serverless hosting the stream is unavailable (HTTP 204) → fall back to polling while visible. */
 export function useRealtime(enabled: boolean) {
   const qc = useQueryClient();
   const timer = useRef<number | undefined>(undefined);
   useEffect(() => {
-    if (!enabled || typeof EventSource === 'undefined') return;
+    if (!enabled) return;
+    let poll: number | undefined;
+    const startPolling = () => {
+      if (poll) return;
+      poll = window.setInterval(() => document.visibilityState === 'visible' && invalidateData(qc), 20_000);
+    };
+    if (typeof EventSource === 'undefined') {
+      startPolling();
+      return () => window.clearInterval(poll);
+    }
     const es = new EventSource('/api/stream');
+    es.onerror = () => {
+      if (es.readyState === EventSource.CLOSED) startPolling();
+    };
     es.onmessage = (e) => {
       let kind = 'change';
       try {
@@ -124,6 +137,7 @@ export function useRealtime(enabled: boolean) {
     return () => {
       es.close();
       window.clearTimeout(timer.current);
+      window.clearInterval(poll);
     };
   }, [enabled, qc]);
 }

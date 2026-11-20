@@ -79,7 +79,9 @@ async function inviteTokenFor(admin: Session, email: string) {
 }
 
 async function main() {
-  const server = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', 'server/index.ts'], {
+  // ACCEPTANCE_ENTRY=scripts/serve-vercel-output.mjs tests the bundled Vercel output instead.
+  const entry = process.env.ACCEPTANCE_ENTRY ?? 'server/index.ts';
+  const server = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', entry], {
     env: { ...process.env, PORT: String(PORT), DATA_DIR, NODE_ENV: 'test', SKIP_SEED: '1', BOOTSTRAP_ADMIN_EMAIL: ADMIN.email, BOOTSTRAP_ADMIN_PASSWORD: ADMIN.password, EMAIL_LOG: 'off' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });

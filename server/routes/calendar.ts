@@ -9,6 +9,7 @@ import { EVENT_TYPES, type CalendarEvent, type CalendarItem } from '../../shared
 
 export const calendarRouter = Router();
 calendarRouter.use(requireAuth);
+const P = (v: unknown) => String(v);
 
 const fmt = (iso: string, allDay: boolean) =>
   new Date(allDay && iso.length === 10 ? `${iso}T00:00:00Z` : iso).toLocaleString('en-GB', {
@@ -20,8 +21,8 @@ const fmt = (iso: string, allDay: boolean) =>
  * milestones, deliverable review deadlines and client-action task deadlines.
  * Rescheduling a milestone therefore updates the calendar & timeline at once.
  */
-calendarRouter.get('/projects/:pid/calendar', (req, res) => {
-  const access = projectAccess(req.user!, req.params.pid);
+calendarRouter.get('/projects/:pid/calendar', async (req, res) => {
+  const access = await projectAccess(req.user!, P(req.params.pid));
   const pid = access.project.id;
   const staff = access.caps.staff;
   const from = typeof req.query.from === 'string' ? req.query.from.slice(0, 10) : '0000-01-01';
@@ -29,7 +30,7 @@ calendarRouter.get('/projects/:pid/calendar', (req, res) => {
   const items: CalendarItem[] = [];
   const today = new Date().toISOString().slice(0, 10);
 
-  const events = all<any>(
+  const events = await all<any>(
     `SELECT e.*, u.name AS owner_name, t.title AS task_title, t.visibility AS task_vis, m.title AS milestone_title, m.visibility AS m_vis, d.title AS deliverable_title, d.status AS d_status
        FROM events e LEFT JOIN users u ON u.id = e.owner_id LEFT JOIN tasks t ON t.id = e.task_id
        LEFT JOIN milestones m ON m.id = e.milestone_id LEFT JOIN deliverables d ON d.id = e.deliverable_id
@@ -49,10 +50,9 @@ calendarRouter.get('/projects/:pid/calendar', (req, res) => {
     });
   }
 
-  const vis = staff ? '' : "AND m.visibility = 'client'";
-  for (const m of all<any>(
+  for (const m of await all<any>(
     `SELECT m.*, ph.name AS phase_name, u.name AS owner_name FROM milestones m LEFT JOIN phases ph ON ph.id = m.phase_id
-       LEFT JOIN users u ON u.id = ph.owner_id WHERE m.project_id = ? AND m.due_date BETWEEN ? AND ? ${vis}`,
+       LEFT JOIN users u ON u.id = ph.owner_id WHERE m.project_id = ? AND m.due_date BETWEEN ? AND ? ${staff ? '' : "AND m.visibility = 'client'"}`,
     pid, from, to,
   ))
     items.push({
@@ -63,10 +63,7 @@ calendarRouter.get('/projects/:pid/calendar', (req, res) => {
       important: m.status !== 'completed',
     });
 
-  for (const d of all<any>(
-    `SELECT d.* FROM deliverables d WHERE d.project_id = ? AND d.review_due BETWEEN ? AND ? ${staff ? '' : "AND d.status != 'draft'"}`,
-    pid, from, to,
-  )) {
+  for (const d of await all<any>(`SELECT d.* FROM deliverables d WHERE d.project_id = ? AND d.review_due BETWEEN ? AND ? ${staff ? '' : "AND d.status != 'draft'"}`, pid, from, to)) {
     const awaiting = ['submitted', 'awaiting_feedback'].includes(d.status);
     items.push({
       key: `deliverable:${d.id}`, source: 'deliverable', source_id: d.id, title: `Review: ${d.title}`, description: d.description, type: 'approval',
@@ -77,9 +74,9 @@ calendarRouter.get('/projects/:pid/calendar', (req, res) => {
     });
   }
 
-  for (const t of all<any>(
+  for (const t of await all<any>(
     `SELECT t.*, u.name AS assignee_name FROM tasks t LEFT JOIN users u ON u.id = t.assignee_id
-      WHERE t.project_id = ? AND t.due_date BETWEEN ? AND ? AND (t.client_action = 1 ${staff ? 'OR 1=1' : ''}) ${staff ? '' : "AND t.visibility = 'client'"}`,
+      WHERE t.project_id = ? AND t.due_date BETWEEN ? AND ? ${staff ? '' : "AND t.client_action = 1 AND t.visibility = 'client'"}`,
     pid, from, to,
   ))
     items.push({
@@ -110,24 +107,26 @@ const eventSchema = z.object({
   participant_ids: z.array(zId).max(50).default([]),
 });
 
-function validateEventRefs(pid: string, b: Partial<z.infer<typeof eventSchema>>) {
+async function validateEventRefs(pid: string, b: Partial<z.infer<typeof eventSchema>>) {
   for (const [col, table] of [['task_id', 'tasks'], ['milestone_id', 'milestones'], ['deliverable_id', 'deliverables']] as const) {
     const v = (b as any)[col];
-    if (v && !get(`SELECT 1 FROM ${table} WHERE id = ? AND project_id = ?`, v, pid)) throw badRequest(`Linked ${table.slice(0, -1)} not found in this project.`);
+    if (v && !(await get(`SELECT 1 FROM ${table} WHERE id = ? AND project_id = ?`, v, pid))) throw badRequest(`Linked ${table.slice(0, -1)} not found in this project.`);
   }
   if (b.ends_at && b.starts_at && b.ends_at < b.starts_at) throw badRequest('The end must be after the start.');
 }
 
-function setParticipants(eventId: string, pid: string, ids: string[]) {
-  run('DELETE FROM event_participants WHERE event_id = ?', eventId);
+async function setParticipants(eventId: string, pid: string, ids: string[]) {
+  await run('DELETE FROM event_participants WHERE event_id = ?', eventId);
   const allowed = new Set(
-    all<{ id: string }>(
-      `SELECT id FROM users WHERE client_id = (SELECT client_id FROM projects WHERE id = ?)
-       OR id = (SELECT manager_id FROM projects WHERE id = ?) OR id IN (SELECT user_id FROM project_members WHERE project_id = ?)`,
-      pid, pid, pid,
+    (
+      await all<{ id: string }>(
+        `SELECT id FROM users WHERE client_id = (SELECT client_id FROM projects WHERE id = ?)
+         OR id = (SELECT manager_id FROM projects WHERE id = ?) OR id IN (SELECT user_id FROM project_members WHERE project_id = ?)`,
+        pid, pid, pid,
+      )
     ).map((r) => r.id),
   );
-  for (const id of ids) if (allowed.has(id)) run('INSERT OR IGNORE INTO event_participants (event_id, user_id) VALUES (?, ?)', eventId, id);
+  for (const id of ids) if (allowed.has(id)) await run('INSERT INTO event_participants (event_id, user_id) VALUES (?, ?) ON CONFLICT DO NOTHING', eventId, id);
 }
 
 const normalise = (b: { starts_at?: string; ends_at?: string | null; all_day?: boolean }) => ({
@@ -135,57 +134,57 @@ const normalise = (b: { starts_at?: string; ends_at?: string | null; all_day?: b
   ends_at: b.ends_at === undefined ? undefined : b.ends_at && (b.all_day ? b.ends_at.slice(0, 10) : new Date(b.ends_at).toISOString()),
 });
 
-calendarRouter.get('/events/:id', (req, res) => {
-  const { row } = scopedRow<CalendarEvent>(req.user!, 'events', req.params.id, 'Event');
-  const participants = all('SELECT u.id, u.name, u.role FROM event_participants p JOIN users u ON u.id = p.user_id WHERE p.event_id = ?', row.id);
-  res.json({ ...row, participants, participant_ids: participants.map((p: any) => p.id) });
+calendarRouter.get('/events/:id', async (req, res) => {
+  const { row } = await scopedRow<CalendarEvent>(req.user!, 'events', P(req.params.id), 'Event');
+  const participants = await all<{ id: string }>('SELECT u.id, u.name, u.role FROM event_participants p JOIN users u ON u.id = p.user_id WHERE p.event_id = ?', row.id);
+  res.json({ ...row, participants, participant_ids: participants.map((p) => p.id) });
 });
 
-calendarRouter.post('/projects/:pid/events', (req, res) => {
-  const access = projectAccess(req.user!, req.params.pid);
+calendarRouter.post('/projects/:pid/events', async (req, res) => {
+  const access = await projectAccess(req.user!, P(req.params.pid));
   if (!access.caps.manage) throw forbidden();
   const body = parse(eventSchema, req.body);
-  validateEventRefs(access.project.id, body);
+  await validateEventRefs(access.project.id, body);
   const id = newId();
   const { participant_ids, ...rest } = body;
   const times = normalise(body);
-  tx(() => {
+  await tx(async () => {
     const ts = now();
-    insert('events', { ...rest, ...times, all_day: body.all_day ? 1 : 0, id, project_id: access.project.id, created_at: ts, updated_at: ts });
-    setParticipants(id, access.project.id, participant_ids);
-    logActivity({ projectId: access.project.id, actorId: req.user!.id, action: 'event.created', summary: `${body.title} scheduled for ${fmt(times.starts_at!, body.all_day)}`, entityType: 'event', entityId: id, entityLabel: body.title, visibility: body.visibility });
+    await insert('events', { ...rest, ...times, all_day: body.all_day ? 1 : 0, id, project_id: access.project.id, created_at: ts, updated_at: ts });
+    await setParticipants(id, access.project.id, participant_ids);
+    await logActivity({ projectId: access.project.id, actorId: req.user!.id, action: 'event.created', summary: `${body.title} scheduled for ${fmt(times.starts_at!, body.all_day)}`, entityType: 'event', entityId: id, entityLabel: body.title, visibility: body.visibility });
   });
   if (body.visibility === 'client')
-    notify([...clientUserIds(access.project.id), ...participant_ids], { projectId: access.project.id, type: 'event.created', title: `Scheduled: ${body.title}`, body: fmt(times.starts_at!, body.all_day), link: `calendar?date=${times.starts_at!.slice(0, 10)}&event=${id}` }, req.user!.id);
+    await notify([...(await clientUserIds(access.project.id)), ...participant_ids], { projectId: access.project.id, type: 'event.created', title: `Scheduled: ${body.title}`, body: fmt(times.starts_at!, body.all_day), link: `calendar?date=${times.starts_at!.slice(0, 10)}&event=${id}` }, req.user!.id);
   res.status(201).json({ id });
 });
 
-calendarRouter.patch('/events/:id', (req, res) => {
-  const { row, access } = scopedRow<CalendarEvent>(req.user!, 'events', req.params.id, 'Event');
+calendarRouter.patch('/events/:id', async (req, res) => {
+  const { row, access } = await scopedRow<CalendarEvent>(req.user!, 'events', P(req.params.id), 'Event');
   if (!access.caps.manage) throw forbidden();
   const body = parse(eventSchema.partial(), req.body);
   Object.keys(body).forEach((k) => (body as any)[k] === undefined && delete (body as any)[k]);
   const allDay = body.all_day ?? !!row.all_day;
-  validateEventRefs(row.project_id, { ...body, starts_at: body.starts_at ?? row.starts_at });
+  await validateEventRefs(row.project_id, { ...body, starts_at: body.starts_at ?? row.starts_at });
   const { participant_ids, ...rest } = body;
   const times = normalise({ starts_at: body.starts_at ?? (body.all_day !== undefined ? row.starts_at : undefined), ends_at: body.ends_at, all_day: allDay });
   const visible = (body.visibility ?? row.visibility) === 'client';
   const title = body.title ?? row.title;
-  const moved = times.starts_at && times.starts_at !== row.starts_at;
-  tx(() => {
-    update('events', row.id, { ...rest, ...times, all_day: body.all_day === undefined ? undefined : body.all_day ? 1 : 0, updated_at: now() });
-    if (participant_ids) setParticipants(row.id, row.project_id, participant_ids);
+  const moved = !!times.starts_at && times.starts_at !== row.starts_at;
+  await tx(async () => {
+    await update('events', row.id, { ...rest, ...times, all_day: body.all_day === undefined ? undefined : body.all_day ? 1 : 0, updated_at: now() });
+    if (participant_ids) await setParticipants(row.id, row.project_id, participant_ids);
     if (moved) {
-      logActivity({ projectId: row.project_id, actorId: req.user!.id, action: 'event.rescheduled', summary: `${title} rescheduled to ${fmt(times.starts_at!, allDay)}`, entityType: 'event', entityId: row.id, entityLabel: title, visibility: visible ? 'client' : 'internal', meta: { from: row.starts_at, to: times.starts_at } });
+      await logActivity({ projectId: row.project_id, actorId: req.user!.id, action: 'event.rescheduled', summary: `${title} rescheduled to ${fmt(times.starts_at!, allDay)}`, entityType: 'event', entityId: row.id, entityLabel: title, visibility: visible ? 'client' : 'internal', meta: { from: row.starts_at, to: times.starts_at } });
     } else if (body.status && body.status !== row.status) {
-      logActivity({ projectId: row.project_id, actorId: req.user!.id, action: 'event.status', summary: `${title} marked ${body.status}`, entityType: 'event', entityId: row.id, entityLabel: title, visibility: visible ? 'client' : 'internal' });
+      await logActivity({ projectId: row.project_id, actorId: req.user!.id, action: 'event.status', summary: `${title} marked ${body.status}`, entityType: 'event', entityId: row.id, entityLabel: title, visibility: visible ? 'client' : 'internal' });
     } else {
-      logActivity({ projectId: row.project_id, actorId: req.user!.id, action: 'event.updated', summary: `${title} updated`, entityType: 'event', entityId: row.id, entityLabel: title, visibility: 'internal' });
+      await logActivity({ projectId: row.project_id, actorId: req.user!.id, action: 'event.updated', summary: `${title} updated`, entityType: 'event', entityId: row.id, entityLabel: title, visibility: 'internal' });
     }
   });
   if (visible && (moved || body.status === 'cancelled')) {
-    const participants = all<{ user_id: string }>('SELECT user_id FROM event_participants WHERE event_id = ?', row.id).map((p) => p.user_id);
-    notify([...clientUserIds(row.project_id), ...participants], {
+    const participants = (await all<{ user_id: string }>('SELECT user_id FROM event_participants WHERE event_id = ?', row.id)).map((p) => p.user_id);
+    await notify([...(await clientUserIds(row.project_id)), ...participants], {
       projectId: row.project_id,
       type: 'deadline.changed',
       title: body.status === 'cancelled' ? `Cancelled: ${title}` : `Rescheduled: ${title}`,
@@ -196,12 +195,12 @@ calendarRouter.patch('/events/:id', (req, res) => {
   res.json({ ok: true });
 });
 
-calendarRouter.delete('/events/:id', (req, res) => {
-  const { row, access } = scopedRow<CalendarEvent>(req.user!, 'events', req.params.id, 'Event');
+calendarRouter.delete('/events/:id', async (req, res) => {
+  const { row, access } = await scopedRow<CalendarEvent>(req.user!, 'events', P(req.params.id), 'Event');
   if (!access.caps.manage) throw forbidden();
-  run('DELETE FROM events WHERE id = ?', row.id);
-  logActivity({ projectId: row.project_id, actorId: req.user!.id, action: 'event.deleted', summary: `${row.title} removed from the calendar`, entityType: 'event', entityId: row.id, visibility: row.visibility });
+  await run('DELETE FROM events WHERE id = ?', row.id);
+  await logActivity({ projectId: row.project_id, actorId: req.user!.id, action: 'event.deleted', summary: `${row.title} removed from the calendar`, entityType: 'event', entityId: row.id, visibility: row.visibility });
   if (row.visibility === 'client')
-    notify(clientUserIds(row.project_id), { projectId: row.project_id, type: 'deadline.changed', title: `Removed from calendar: ${row.title}`, link: 'calendar' }, req.user!.id);
+    await notify(await clientUserIds(row.project_id), { projectId: row.project_id, type: 'deadline.changed', title: `Removed from calendar: ${row.title}`, link: 'calendar' }, req.user!.id);
   res.json({ ok: true });
 });

@@ -51,4 +51,6 @@ export const zPassword = z
 export const zVisibility = z.enum(['internal', 'client']);
 export const zBoolInt = z.union([z.boolean(), z.literal(0), z.literal(1)]).transform((v) => (v ? 1 : 0));
 
-export const APP_URL = process.env.APP_URL ?? 'http://localhost:5173';
+export const APP_URL =
+  process.env.APP_URL ??
+  (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : 'http://localhost:5173');

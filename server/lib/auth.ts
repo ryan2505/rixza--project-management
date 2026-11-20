@@ -32,32 +32,32 @@ export async function verifyPassword(password: string, stored: string | null) {
 
 export const SESSION_COOKIE = 'rixza_session';
 const SESSION_DAYS = 14;
-const isProd = process.env.NODE_ENV === 'production';
+const secureCookies = process.env.NODE_ENV === 'production' || !!process.env.VERCEL;
 
-export function createSession(res: Response, userId: string, userAgent?: string) {
+export async function createSession(res: Response, userId: string, userAgent?: string) {
   const token = randomToken();
   const expires = new Date(Date.now() + SESSION_DAYS * 864e5);
-  insert('sessions', { id: sha256(token), user_id: userId, created_at: now(), expires_at: expires.toISOString(), user_agent: userAgent?.slice(0, 300) });
-  run('UPDATE users SET last_login_at = ? WHERE id = ?', now(), userId);
-  res.cookie(SESSION_COOKIE, token, { httpOnly: true, sameSite: 'lax', secure: isProd, expires, path: '/' });
+  await insert('sessions', { id: sha256(token), user_id: userId, created_at: now(), expires_at: expires.toISOString(), user_agent: userAgent?.slice(0, 300) });
+  await run('UPDATE users SET last_login_at = ? WHERE id = ?', now(), userId);
+  res.cookie(SESSION_COOKIE, token, { httpOnly: true, sameSite: 'lax', secure: secureCookies, expires, path: '/' });
 }
 
-export function destroySession(req: Request, res: Response) {
+export async function destroySession(req: Request, res: Response) {
   const token = req.cookies?.[SESSION_COOKIE];
-  if (token) run('DELETE FROM sessions WHERE id = ?', sha256(token));
+  if (token) await run('DELETE FROM sessions WHERE id = ?', sha256(token));
   res.clearCookie(SESSION_COOKIE, { path: '/' });
 }
 
-export function destroyUserSessions(userId: string) {
-  run('DELETE FROM sessions WHERE user_id = ?', userId);
+export async function destroyUserSessions(userId: string) {
+  await run('DELETE FROM sessions WHERE user_id = ?', userId);
 }
 
 /** Resolves the session cookie to an *active* user. Suspended users or suspended
  *  client organisations are rejected on every request, not just at login. */
-export function loadUser(req: Request, _res: Response, next: NextFunction) {
+export async function loadUser(req: Request, _res: Response, next: NextFunction) {
   const token = req.cookies?.[SESSION_COOKIE];
   if (token) {
-    const user = get<SessionUser>(
+    const user = await get<SessionUser>(
       `SELECT u.id, u.email, u.name, u.title, u.role, u.client_id, u.email_notifications
          FROM sessions s
          JOIN users u ON u.id = s.user_id
@@ -99,12 +99,12 @@ export function csrfGuard(req: Request, _res: Response, next: NextFunction) {
 
 // ---- One-time tokens (invitations & password resets) ----
 
-export function createAuthToken(userId: string, kind: 'invite' | 'reset') {
+export async function createAuthToken(userId: string, kind: 'invite' | 'reset') {
   const token = randomToken();
   const ttlHours = kind === 'invite' ? 24 * 7 : 1;
   // Only one live token per user & kind.
-  run('UPDATE auth_tokens SET used_at = ? WHERE user_id = ? AND kind = ? AND used_at IS NULL', now(), userId, kind);
-  insert('auth_tokens', {
+  await run('UPDATE auth_tokens SET used_at = ? WHERE user_id = ? AND kind = ? AND used_at IS NULL', now(), userId, kind);
+  await insert('auth_tokens', {
     id: newId(),
     user_id: userId,
     kind,
@@ -124,7 +124,7 @@ export function findAuthToken(token: string, kind: 'invite' | 'reset') {
   );
 }
 
-// ---- Naive in-memory rate limiter for auth endpoints ----
+// ---- In-memory rate limiter for auth endpoints (per instance) ----
 const attempts = new Map<string, { count: number; reset: number }>();
 export function rateLimit(key: string, max = 10, windowMs = 15 * 60e3) {
   const t = Date.now();

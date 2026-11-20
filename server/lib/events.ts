@@ -4,13 +4,17 @@ import type { SessionUser } from '../../shared/domain.ts';
 
 // Server-Sent Events: tells open browsers *that* something changed in a project
 // (never what) so they refetch through the normal authorised API.
+// Serverless platforms (Vercel) can't hold long-lived connections: the stream answers
+// 204, which tells EventSource to stop, and the UI falls back to periodic refresh.
 interface Conn {
   user: SessionUser;
   res: Response;
 }
 const conns = new Set<Conn>();
+export const realtimeEnabled = !process.env.VERCEL && process.env.REALTIME !== 'off';
 
 export function streamHandler(req: Request, res: Response) {
+  if (!realtimeEnabled) return res.status(204).end();
   const user = req.user!;
   res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive' });
   res.flushHeaders();
@@ -25,9 +29,9 @@ export function streamHandler(req: Request, res: Response) {
 }
 
 export function broadcastProject(projectId: string | null, kind = 'change') {
-  if (!projectId) return;
+  if (!projectId || !conns.size) return;
   for (const c of conns) {
-    if (canAccessProject(c.user, projectId)) c.res.write(`data: ${JSON.stringify({ projectId, kind })}\n\n`);
+    void canAccessProject(c.user, projectId).then((ok) => ok && c.res.write(`data: ${JSON.stringify({ projectId, kind })}\n\n`));
   }
 }
 

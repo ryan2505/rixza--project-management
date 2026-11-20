@@ -82,7 +82,7 @@ function VersionUploadModal({ open, onClose, deliverable }: { open: boolean; onC
         <button type="button" onClick={() => ref.current?.click()} className="flex flex-col items-center gap-1 rounded-lg border border-dashed border-line-strong px-4 py-6 text-center hover:border-brand hover:bg-brand-50/40">
           <Upload className="size-4 text-muted" />
           <span className="text-13 font-medium">{files.length ? `${files.length} file${files.length > 1 ? 's' : ''} selected` : 'Choose files'}</span>
-          <span className="text-xs text-muted">{files.length ? files.map((f) => f.name).join(', ') : 'Up to 10 files, 50 MB each'}</span>
+          <span className="text-xs text-muted">{files.length ? files.map((f) => f.name).join(', ') : 'Up to 10 files per upload'}</span>
         </button>
         <input ref={ref} type="file" multiple hidden onChange={(e) => setFiles(Array.from(e.target.files ?? []))} />
         <div className="grid gap-3 sm:grid-cols-2">

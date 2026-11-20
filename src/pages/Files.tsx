@@ -46,7 +46,7 @@ function UploadModal({ open, onClose, defaultCategory, supersedes }: { open: boo
         >
           <UploadCloud className="size-5 text-muted" />
           <span className="text-13 font-medium">{files.length ? `${files.length} file${files.length > 1 ? 's' : ''} ready` : 'Drop files here or click to browse'}</span>
-          <span className="max-w-full truncate text-xs text-muted">{files.length ? files.map((f) => f.name).join(', ') : `${supersedes ? 'One file' : 'Up to 10 files'}, 50 MB max each`}</span>
+          <span className="max-w-full truncate text-xs text-muted">{files.length ? files.map((f) => f.name).join(', ') : supersedes ? 'One file' : 'Up to 10 files per upload'}</span>
         </button>
         <input ref={ref} type="file" multiple={!supersedes} hidden onChange={(e) => setFiles(Array.from(e.target.files ?? []))} />
         {!supersedes && (

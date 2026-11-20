@@ -124,8 +124,6 @@ export const FILE_CATEGORIES = [
 ] as const;
 export type FileCategory = (typeof FILE_CATEGORIES)[number];
 
-export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
-
 // ---------- API payload types ----------
 
 export interface SessionUser {

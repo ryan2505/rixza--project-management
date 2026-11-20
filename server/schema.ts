@@ -1,5 +1,17 @@
-// Relational schema. Every project-scoped record carries project_id so access
-// can be enforced with a single join back to projects.client_id.
+// PostgreSQL schema (Supabase in production, embedded PGlite in development/tests).
+// Every project-scoped record carries project_id so access can be enforced with a
+// single join back to projects.client_id. Dates are ISO-8601 TEXT (UTC) for portability.
+//
+// Row Level Security is enabled on every table with NO policies: Supabase's public
+// Data API (anon / authenticated keys) can read nothing. Only the server, connecting
+// as the table owner through DATABASE_URL, can access data — and it enforces RBAC itself.
+
+export const TABLES = [
+  'clients', 'users', 'sessions', 'auth_tokens', 'templates', 'projects', 'project_members', 'phases',
+  'milestones', 'tasks', 'threads', 'deliverables', 'deliverable_versions', 'approvals', 'revision_requests',
+  'comments', 'events', 'event_participants', 'files', 'notifications', 'activity', 'email_outbox',
+] as const;
+
 export const SCHEMA = /* sql */ `
 CREATE TABLE IF NOT EXISTS clients (
   id TEXT PRIMARY KEY,
@@ -16,7 +28,7 @@ CREATE TABLE IF NOT EXISTS clients (
 
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
-  email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  email TEXT NOT NULL UNIQUE CHECK (email = lower(email)),
   name TEXT NOT NULL,
   title TEXT,
   password_hash TEXT,
@@ -31,7 +43,7 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
-  id TEXT PRIMARY KEY,               -- sha256(token); raw token only lives in the cookie
+  id TEXT PRIMARY KEY,               -- sha256(token); the raw token only lives in the cookie
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   created_at TEXT NOT NULL,
   expires_at TEXT NOT NULL,
@@ -127,7 +139,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   due_date TEXT,
   visibility TEXT NOT NULL DEFAULT 'internal' CHECK (visibility IN ('internal','client')),
   client_action INTEGER NOT NULL DEFAULT 0,
-  position REAL NOT NULL DEFAULT 0,
+  position DOUBLE PRECISION NOT NULL DEFAULT 0,
   created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
@@ -178,7 +190,7 @@ CREATE TABLE IF NOT EXISTS deliverable_versions (
 CREATE TABLE IF NOT EXISTS approvals (
   id TEXT PRIMARY KEY,
   deliverable_id TEXT NOT NULL REFERENCES deliverables(id) ON DELETE CASCADE,
-  version_id TEXT NOT NULL REFERENCES deliverable_versions(id),
+  version_id TEXT NOT NULL REFERENCES deliverable_versions(id) ON DELETE CASCADE,
   version INTEGER NOT NULL,
   user_id TEXT NOT NULL REFERENCES users(id),
   decision TEXT NOT NULL CHECK (decision IN ('approved','changes_requested')),
@@ -191,13 +203,13 @@ CREATE TABLE IF NOT EXISTS approvals (
 CREATE TABLE IF NOT EXISTS revision_requests (
   id TEXT PRIMARY KEY,
   deliverable_id TEXT NOT NULL REFERENCES deliverables(id) ON DELETE CASCADE,
-  version_id TEXT NOT NULL REFERENCES deliverable_versions(id),
-  approval_id TEXT NOT NULL REFERENCES approvals(id),
+  version_id TEXT NOT NULL REFERENCES deliverable_versions(id) ON DELETE CASCADE,
+  approval_id TEXT NOT NULL REFERENCES approvals(id) ON DELETE CASCADE,
   requested_by TEXT NOT NULL REFERENCES users(id),
   details TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','resolved')),
   resolved_by TEXT REFERENCES users(id),
-  resolved_version_id TEXT REFERENCES deliverable_versions(id),
+  resolved_version_id TEXT REFERENCES deliverable_versions(id) ON DELETE SET NULL,
   created_at TEXT NOT NULL,
   resolved_at TEXT
 );
@@ -215,7 +227,7 @@ CREATE TABLE IF NOT EXISTS comments (
   created_at TEXT NOT NULL,
   edited_at TEXT,
   deleted_at TEXT,
-  CHECK ((task_id IS NOT NULL) + (thread_id IS NOT NULL) + (deliverable_id IS NOT NULL) = 1)
+  CHECK ((task_id IS NOT NULL)::int + (thread_id IS NOT NULL)::int + (deliverable_id IS NOT NULL)::int = 1)
 );
 CREATE INDEX IF NOT EXISTS idx_comments_task ON comments(task_id);
 CREATE INDEX IF NOT EXISTS idx_comments_thread ON comments(thread_id);
@@ -306,4 +318,6 @@ CREATE TABLE IF NOT EXISTS email_outbox (
   body TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
+
+${TABLES.map((t) => `ALTER TABLE ${t} ENABLE ROW LEVEL SECURITY;`).join('\n')}
 `;
