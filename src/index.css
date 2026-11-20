@@ -1,0 +1,103 @@
+@import "tailwindcss";
+@import "@fontsource-variable/inter";
+
+/* ------------------------------------------------------------------
+   RIXZA design tokens — Electric Blue / Black / White.
+   One accent colour; everything else is a calibrated neutral.
+   ------------------------------------------------------------------ */
+@theme {
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  --color-brand: #0000ff;
+  --color-brand-hover: #0000d9;
+  --color-brand-50: #f3f3ff;
+  --color-brand-100: #e5e5ff;
+  --color-brand-200: #c9c9ff;
+
+  --color-ink: #0a0a0b;
+  --color-ink-2: #2e2e33;
+  --color-muted: #6b6b74;
+  --color-subtle: #9d9da6;
+  --color-line: #ebebef;
+  --color-line-strong: #d9d9df;
+  --color-canvas: #fafafa;
+  --color-surface: #ffffff;
+  --color-hover: #f4f4f6;
+
+  --color-warning: #a35200;
+  --color-warning-bg: #fff6eb;
+  --color-danger: #c62828;
+  --color-danger-bg: #fdf1f1;
+  --color-success: #0d6b46;
+  --color-success-bg: #eef8f3;
+
+  --text-2xs: 11px;
+  --text-2xs--line-height: 16px;
+  --text-xs: 12px;
+  --text-xs--line-height: 16px;
+  --text-13: 13px;
+  --text-13--line-height: 20px;
+  --text-sm: 14px;
+  --text-sm--line-height: 20px;
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 10px;
+
+  --shadow-pop: 0 1px 2px rgb(10 10 11 / 0.04), 0 8px 24px -6px rgb(10 10 11 / 0.12);
+  --shadow-card: 0 1px 2px rgb(10 10 11 / 0.04);
+
+  --animate-fade-in: fade-in 120ms ease-out;
+  --animate-slide-in: slide-in 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  --animate-pop-in: pop-in 140ms cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  @keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  @keyframes slide-in {
+    from { transform: translateX(24px); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+  }
+  @keyframes pop-in {
+    from { transform: translateY(4px) scale(0.99); opacity: 0; }
+    to { transform: translateY(0) scale(1); opacity: 1; }
+  }
+}
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    font-feature-settings: "cv11", "ss01", "ss03";
+  }
+  body {
+    @apply bg-canvas text-ink font-sans text-13;
+  }
+  ::selection {
+    background: var(--color-brand-100);
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-brand);
+    outline-offset: 2px;
+  }
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+  h1, h2, h3 {
+    letter-spacing: -0.011em;
+  }
+}
+
+@layer components {
+  .tabular { font-variant-numeric: tabular-nums; }
+  .scrollbar-thin { scrollbar-width: thin; scrollbar-color: var(--color-line-strong) transparent; }
+  .prose-comment { white-space: pre-wrap; overflow-wrap: anywhere; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
